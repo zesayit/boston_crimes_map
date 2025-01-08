@@ -1,45 +1,195 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Mapa de Crimes</title>
+  <title>Mapa de Crimes em Boston</title>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
   <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+
   <style>
+#blinkMessage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 24px;
+  font-weight: bold;
+  color: red;
+  z-index: 2000;
+  text-align: center;
+  animation: blink 1s infinite; /* Animação de piscar */
+  display: none; /* Oculto por padrão */
+}
+
+/* Animação de piscar */
+@keyframes blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+.hidden {
+  display: none;
+}
+
+#mapTitle {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 24px;
+  font-weight: bold;
+  color: black;
+  z-index: 1000;
+  background: rgba(255, 255, 255, 0.8); /* Fundo semitransparente */
+  padding: 5px 10px; /* Espaçamento ao redor do texto */
+  border-radius: 5px; /* Bordas arredondadas */
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2); /* Sombra suave */
+}
+
+/* Estilo para modo noturno */
+.night-mode #mapTitle {
+  color: white;
+  background: rgba(0, 0, 0, 0.8); /* Fundo escuro para modo noturno */
+}
+
+    /* Estilo para o mapa */
     #map {
       height: 100vh;
       width: 100%;
     }
+
     .dropdown-control {
       background: white;
       padding: 10px;
       border-radius: 5px;
       box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
     }
+
     .dropdown-control label {
       display: block;
       margin-bottom: 5px;
       cursor: pointer;
     }
+
     .dropdown-control input {
       margin-right: 5px;
+    }
+
+    .rotate-button {
+      position: absolute;
+      top: 110px;
+      left: 10px;
+      z-index: 1000;
+      background: white;
+      padding: 10px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    /* Estilo do modo noturno */
+    .night-mode {
+      background-color: black;
+      color: white;
+    }
+    .night-mode .dropdown-control {
+      background: #333;
+      color: white;
+      border: 1px solid #444;
+    }
+    .night-mode label {
+      color: white;
     }
   </style>
 </head>
 <body>
+  <h1 id="mapTitle">Crimes Boston</h1>
   <div id="map"></div>
-  <script>
-    // Inicializar o mapa
-    const map = L.map('map').setView([42.3601, -71.0589], 12);
+  <div id="statsContainer" style="position: absolute; top: 150px; left: 10px; background: white; padding: 10px; border-radius: 5px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2); width: 250px; z-index: 1000; display: none;">
+    <h3>Resumo Estatístico</h3>
+    <p id="totalCrimes">Total de Crimes: 0</p>
+    <p id="crimesByYear">Crimes por Ano:</p>
+    <ul id="crimesByYearList"></ul>
+    <p id="crimesByType">Crimes por Tipo:</p>
+    <ul id="crimesByTypeList"></ul>
+  </div>
+  
+  <div id="blinkMessage" class="hidden">Refresh to stop the earthquake</div>
 
-    // Adicionar camada base
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  <button id="toggleNightMode" style="position: absolute; top: 10px; left: 10px; z-index: 1000; background: white; padding: 10px; border-radius: 5px; cursor: pointer;">Ativar Modo Noturno</button>
+  <button id="startRotate" class="rotate-button">EARTHQUAKE</button>
+  <script>
+    // Iniciar o mapa
+    const map = L.map('map', {
+      zoomControl: true,
+      dragging: true,
+      tap: false,
+    }).setView([42.3601, -71.0589], 12);
+
+    // Adicionar camada base padrão
+    const lightLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
+
+    // Camada base do modo noturno
+    const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap contributors & CARTO',
+    });
+
+    // Alternar modo noturno
+    const toggleButton = document.getElementById('toggleNightMode');
+    let isNightMode = false;
+
+    toggleButton.addEventListener('click', () => {
+      isNightMode = !isNightMode;
+      if (isNightMode) {
+        map.removeLayer(lightLayer);
+        darkLayer.addTo(map);
+        document.body.classList.add('night-mode');
+        toggleButton.textContent = 'Desativar Modo Noturno';
+      } else {
+        map.removeLayer(darkLayer);
+        lightLayer.addTo(map);
+        document.body.classList.remove('night-mode');
+        toggleButton.textContent = 'Ativar Modo Noturno';
+      }
+    });
+
+    // Função para rodar o mapa
+    let rotationInterval = null;
+
+    function startRotation() {
+      const center = map.getCenter();
+      let angle = 0;
+
+      rotationInterval = setInterval(() => {
+        angle += 10; // Incrementa o ângulo de rotação para velocidade rápida
+        const radian = (angle * Math.PI) / 180;
+        const latOffset = 0.005 * Math.sin(radian); // Pequeno desvio para simular a rotação
+        const lngOffset = 0.005 * Math.cos(radian);
+        map.panTo([center.lat + latOffset, center.lng + lngOffset]);
+      }, 10); // Atualização a cada 30ms para rotação rápida
+    }
+
+    // Adicionar evento ao botão de rodar
+    function showBlinkMessage() {
+  const blinkMessage = document.getElementById('blinkMessage'); // Seleciona a mensagem
+  blinkMessage.style.display = 'block'; // Exibe a mensagem
+}
+
+    document.getElementById('startRotate').addEventListener('click', () => {
+  startRotation(); // Inicia a rotação do mapa
+  showBlinkMessage(); // Exibe a mensagem a piscar
+  document.getElementById('startRotate').disabled = true; // Desabilita o botão para impedir múltiplas rotações
+});
 
     // Diretório dos GeoJSON
     const geojsonDir = './anos/';
@@ -51,6 +201,9 @@
       spiderfyOnMaxZoom: false,
       showCoverageOnHover: false,
     });
+
+    // Adicionar barra de pesquisa
+    L.Control.geocoder().addTo(map);
 
     // Adicionar controle com checkboxes ao mapa
     const dropdownControl = L.control({ position: 'topright' });
@@ -70,7 +223,7 @@
             </label>
           `
           )
-          .join('')}
+          .join('')};
       `;
       return div;
     };
@@ -112,6 +265,59 @@
     }
 
     // Gerir o carregamento/descarregamento de anos
+    function processCrimeData(data) {
+  const stats = {
+    total: 0,
+    byYear: {},
+    byType: {},
+  };
+
+  data.features.forEach((feature) => {
+    stats.total += 1;
+
+    // Processar por ano
+    const dateValue = feature.properties.issdttm;
+const year = dateValue && !isNaN(new Date(dateValue).getFullYear())
+  ? new Date(dateValue).getFullYear()
+  : "Sem Data";
+    stats.byYear[year] = (stats.byYear[year] || 0) + 1;
+
+    // Processar por tipo
+    const type = feature.properties.descript || 'Sem Descrição';
+    stats.byType[type] = (stats.byType[type] || 0) + 1;
+  });
+
+  return stats;
+}
+
+function updateStatsUI(stats) {
+  // Atualizar total de crimes
+  document.getElementById('totalCrimes').textContent = `Total de Crimes: ${stats.total}`;
+
+  // Atualizar crimes por ano
+  const crimesByYearList = document.getElementById('crimesByYearList');
+  crimesByYearList.innerHTML = '';
+  for (const year in stats.byYear) {
+    const li = document.createElement('li');
+    li.textContent = `${year}: ${stats.byYear[year]}`;
+    crimesByYearList.appendChild(li);
+  }
+
+  // Atualizar crimes por tipo
+  const crimesByTypeList = document.getElementById('crimesByTypeList');
+  crimesByTypeList.innerHTML = '';
+  for (const type in stats.byType) {
+    const li = document.createElement('li');
+    li.textContent = `${type}: ${stats.byType[type]}`;
+    crimesByTypeList.appendChild(li);
+  }
+}
+
+function showStatsContainer() {
+  const statsContainer = document.getElementById('statsContainer');
+  statsContainer.style.display = 'block';
+}
+
     document.addEventListener('change', (e) => {
       if (e.target.matches('[data-year]')) {
         const year = e.target.getAttribute('data-year');
@@ -123,51 +329,56 @@
             fetch(geojsonFile)
               .then((response) => response.json())
               .then((data) => {
-                const aggregatedData = aggregateCrimesByCoordinates(data);
+  const aggregatedData = aggregateCrimesByCoordinates(data);
 
-                const geojsonLayer = L.geoJSON(aggregatedData, {
-                  onEachFeature: (feature, layer) => {
-                    if (feature.properties.length > 1) {
-                      const dropdown = `
-                        <select id="crime-dropdown-${feature.geometry.coordinates.join(',')}">
-                          ${feature.properties.map((crime, index) => `
-                            <option value="${index}">${crime.descript || 'Sem descrição'}</option>
-                          `).join('')}
-                        </select>
-                        <div id="crime-details-${feature.geometry.coordinates.join(',')}">${generatePopupContent(
-                          feature.properties[0]
-                        )}</div>
-                      `;
+  // Processar os dados e atualizar o resumo estatístico
+  const stats = processCrimeData(data); // Processa os dados
+  updateStatsUI(stats); // Atualiza o UI com os resultados
+  showStatsContainer(); // Exibe o contentor de resumo
 
-                      layer.bindPopup(`
-                        <strong>Vários Crimes</strong><br>
-                        ${dropdown}
-                      `);
+  const geojsonLayer = L.geoJSON(aggregatedData, {
+    onEachFeature: (feature, layer) => {
+      if (feature.properties.length > 1) {
+        const dropdown = `
+          <select id="crime-dropdown-${feature.geometry.coordinates.join(',')}">
+            ${feature.properties.map((crime, index) => `
+              <option value="${index}">${crime.descript || 'Sem descrição'}</option>
+            `).join('')}
+          </select>
+          <div id="crime-details-${feature.geometry.coordinates.join(',')}">${generatePopupContent(
+            feature.properties[0]
+          )}</div>
+        `;
 
-                      layer.on('popupopen', () => {
-                        const coords = feature.geometry.coordinates.join(',');
-                        const dropdownEl = document.getElementById(`crime-dropdown-${coords}`);
-                        const detailsEl = document.getElementById(`crime-details-${coords}`);
+        layer.bindPopup(`
+          <strong>Vários Crimes</strong><br>
+          ${dropdown}
+        `);
 
-                        dropdownEl.addEventListener('change', (e) => {
-                          const selectedIndex = parseInt(e.target.value, 10);
-                          detailsEl.innerHTML = generatePopupContent(
-                            feature.properties[selectedIndex]
-                          );
-                        });
-                      });
-                    } else {
-                      layer.bindPopup(generatePopupContent(feature.properties[0]));
-                    }
-                  },
-                });
+        layer.on('popupopen', () => {
+          const coords = feature.geometry.coordinates.join(',');
+          const dropdownEl = document.getElementById(`crime-dropdown-${coords}`);
+          const detailsEl = document.getElementById(`crime-details-${coords}`);
 
-                yearLayers[year] = geojsonLayer;
-                clusterGroup.addLayer(geojsonLayer);
-              })
-              .catch((error) =>
-                console.error(`Erro ao carregar GeoJSON para ${year}:`, error)
-              );
+          dropdownEl.addEventListener('change', (e) => {
+            const selectedIndex = parseInt(e.target.value, 10);
+            detailsEl.innerHTML = generatePopupContent(
+              feature.properties[selectedIndex]
+            );
+          });
+        });
+      } else {
+        layer.bindPopup(generatePopupContent(feature.properties[0]));
+      }
+    },
+  });
+
+  yearLayers[year] = geojsonLayer;
+  clusterGroup.addLayer(geojsonLayer);
+})
+.catch((error) =>
+  console.error(`Erro ao carregar GeoJSON para ${year}:`, error)
+);
           }
           map.addLayer(clusterGroup);
         } else {
