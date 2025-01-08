@@ -45,20 +45,20 @@
     const geojsonDir = './anos/';
     const yearLayers = {};
     const clusterGroup = L.markerClusterGroup({
-  maxClusterRadius: 80, // Raio padrão
-  disableClusteringAtZoom: 16,
-  spiderfyOnMaxZoom: false, // Evita que os marcadores sejam expandidos
-  showCoverageOnHover: false, // Evita mostrar área de clusters ao passar o rato
-});
-
+      maxClusterRadius: 50,
+      disableClusteringAtZoom: 16,
+      chunkedLoading: true,
+      spiderfyOnMaxZoom: false,
+      showCoverageOnHover: false,
+    });
 
     // Adicionar controle com checkboxes ao mapa
     const dropdownControl = L.control({ position: 'topright' });
     dropdownControl.onAdd = () => {
       const div = L.DomUtil.create('div', 'dropdown-control');
 
-        // Evitar que cliques na legenda sejam propagados para o mapa
-  L.DomEvent.disableClickPropagation(div);
+      // Evitar que cliques na legenda sejam propagados para o mapa
+      L.DomEvent.disableClickPropagation(div);
 
       div.innerHTML = `
         <strong>Selecionar Anos:</strong>
@@ -76,6 +76,41 @@
     };
     dropdownControl.addTo(map);
 
+    // Função para agregar crimes por coordenadas
+    function aggregateCrimesByCoordinates(data) {
+      const aggregatedData = {};
+
+      data.features.forEach((feature) => {
+        const coords = feature.geometry.coordinates.join(',');
+
+        if (!aggregatedData[coords]) {
+          aggregatedData[coords] = {
+            geometry: feature.geometry,
+            properties: [],
+          };
+        }
+
+        aggregatedData[coords].properties.push(feature.properties);
+      });
+
+      return Object.values(aggregatedData).map((entry) => ({
+        type: 'Feature',
+        geometry: entry.geometry,
+        properties: entry.properties,
+      }));
+    }
+
+    // Função para gerar o conteúdo do popup
+    function generatePopupContent(properties) {
+      return `
+        <b>Crime:</b> ${properties.descript || 'Sem descrição'}<br>
+        <b>Gravidade:</b> ${properties.viollevel || 'N/A'}<br>
+        <b>Data:</b> ${properties.issdttm || 'N/A'}<br>
+        <b>Local:</b> ${properties.address || 'N/A'}<br>
+        <b>Comentários:</b> ${properties.comments || 'Sem comentários'}
+      `;
+    }
+
     // Gerir o carregamento/descarregamento de anos
     document.addEventListener('change', (e) => {
       if (e.target.matches('[data-year]')) {
@@ -85,86 +120,56 @@
         if (e.target.checked) {
           // Carregar GeoJSON
           if (!yearLayers[year]) {
-// Função para carregar e processar dados GeoJSON
-fetch(geojsonFile)
-  .then((response) => response.json())
-  .then((data) => {
-    // Agrupar crimes pelas mesmas coordenadas
-    const groupedData = {};
-    data.features.forEach((feature) => {
-      const coords = feature.geometry.coordinates.join(',');
-      if (!groupedData[coords]) {
-        groupedData[coords] = [];
-      }
-      groupedData[coords].push(feature.properties);
-    });
+            fetch(geojsonFile)
+              .then((response) => response.json())
+              .then((data) => {
+                const aggregatedData = aggregateCrimesByCoordinates(data);
 
-    const geojsonLayer = L.geoJSON(data, {
-  onEachFeature: (feature, layer) => {
-    const coords = feature.geometry.coordinates.join(',');
+                const geojsonLayer = L.geoJSON(aggregatedData, {
+                  onEachFeature: (feature, layer) => {
+                    if (feature.properties.length > 1) {
+                      const dropdown = `
+                        <select id="crime-dropdown-${feature.geometry.coordinates.join(',')}">
+                          ${feature.properties.map((crime, index) => `
+                            <option value="${index}">${crime.descript || 'Sem descrição'}</option>
+                          `).join('')}
+                        </select>
+                        <div id="crime-details-${feature.geometry.coordinates.join(',')}">${generatePopupContent(
+                          feature.properties[0]
+                        )}</div>
+                      `;
 
-    if (groupedData[coords] && groupedData[coords].length > 1) {
-      const dropdown = `
-        <select id="crime-dropdown-${coords}">
-          ${groupedData[coords]
-            .map((crime, index) => `
-              <option value="${index}">${crime.descript || 'Sem descrição'}</option>
-            `)
-            .join('')}
-        </select>
-        <div id="crime-details-${coords}">Carregando...</div>
-      `;
+                      layer.bindPopup(`
+                        <strong>Vários Crimes</strong><br>
+                        ${dropdown}
+                      `);
 
-      layer.bindPopup(`
-        <strong>Vários Crimes</strong><br>
-        ${dropdown}
-      `);
+                      layer.on('popupopen', () => {
+                        const coords = feature.geometry.coordinates.join(',');
+                        const dropdownEl = document.getElementById(`crime-dropdown-${coords}`);
+                        const detailsEl = document.getElementById(`crime-details-${coords}`);
 
-      layer.on('popupopen', () => {
-        const dropdownEl = document.getElementById(`crime-dropdown-${coords}`);
-        const detailsEl = document.getElementById(`crime-details-${coords}`);
-        
-        // Carregar detalhes apenas ao abrir
-        const selectedCrime = groupedData[coords][0];
-        detailsEl.innerHTML = generatePopupContent(selectedCrime);
+                        dropdownEl.addEventListener('change', (e) => {
+                          const selectedIndex = parseInt(e.target.value, 10);
+                          detailsEl.innerHTML = generatePopupContent(
+                            feature.properties[selectedIndex]
+                          );
+                        });
+                      });
+                    } else {
+                      layer.bindPopup(generatePopupContent(feature.properties[0]));
+                    }
+                  },
+                });
 
-        dropdownEl.addEventListener('change', (e) => {
-  const selectedIndex = parseInt(e.target.value, 10);
-  detailsEl.innerHTML = 'A carregar...'; // Mostra uma mensagem enquanto carrega
-
-  // Simula o carregamento de dados (Lazy Loading)
-  setTimeout(() => {
-    // Após o atraso, atualiza o conteúdo com os detalhes do crime
-    detailsEl.innerHTML = generatePopupContent(groupedData[coords][selectedIndex]);
-  }, 500); // 500ms de atraso
-});
-      });
-    } else {
-      layer.bindPopup(generatePopupContent(feature.properties));
-    }
-  },
-});
-
-    clusterGroup.addLayer(geojsonLayer);
-    map.addLayer(clusterGroup);
-    yearLayers[year] = geojsonLayer;
-  })
-  .catch((error) =>
-    console.error(`Erro ao carregar GeoJSON para ${year}:`, error)
-  );
-
-// Função para gerar o conteúdo do popup
-function generatePopupContent(crime) {
-  return `
-    <b>Crime:</b> ${crime.descript || 'N/A'}<br>
-    <b>Severity:</b> ${crime.viollevel || 'N/A'}<br>
-    <b>Date:</b> ${crime.issdttm || 'N/A'}<br>
-    <b>Location:</b> ${crime.address || 'N/A'}<br>
-    <b>Comments:</b> ${crime.comments || 'No comments'}
-  `;
-}
-
+                yearLayers[year] = geojsonLayer;
+                clusterGroup.addLayer(geojsonLayer);
+              })
+              .catch((error) =>
+                console.error(`Erro ao carregar GeoJSON para ${year}:`, error)
+              );
           }
+          map.addLayer(clusterGroup);
         } else {
           // Remover GeoJSON
           if (yearLayers[year]) {
